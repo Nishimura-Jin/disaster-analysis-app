@@ -6,17 +6,15 @@ import pandas as pd
 import requests
 import streamlit as st
 
+# 日本語フォント設定
 font_path = r"C:\Users\lunat\OneDrive\ドキュメント\Python\Noto_Sans_JP\NotoSansJP-VariableFont_wght.ttf"
 font_prop = fm.FontProperties(fname=font_path)
-
 plt.rcParams["font.family"] = font_prop.get_name()
 
 
-# ======================
-# 地域コード → 都道府県（日本語）
-# ======================
-def convert_region(code):
-    code = str(code)
+# 都道府県コード変換
+def convert_region(code: str) -> str:
+    code = str(code)[:2]
 
     mapping = {
         "01": "北海道",
@@ -68,13 +66,11 @@ def convert_region(code):
         "47": "沖縄県",
     }
 
-    return mapping.get(code[:2], "不明")
+    return mapping.get(code, "不明")
 
 
-# ======================
-# 災害種別変換（日本語）
-# ======================
-def convert_event(code):
+# 警報種別
+def convert_event(code: str) -> str:
     mapping = {
         "14": "大雨",
         "15": "洪水",
@@ -85,98 +81,81 @@ def convert_event(code):
     return mapping.get(str(code), "その他")
 
 
-# ======================
-# データ取得（気象庁）
-# ======================
-def fetch_data():
+# 気象庁データ取得
+def fetch_data() -> pd.DataFrame:
     url = "https://www.jma.go.jp/bosai/warning/data/warning/map.json"
 
-    res = requests.get(url)
-    data = res.json()
+    try:
+        res = requests.get(url, timeout=10)
+        res.raise_for_status()
+        raw = res.json()
+    except Exception:
+        return pd.DataFrame()
 
     records = []
 
-    for report in data:
+    for report in raw:
         try:
-            dt = pd.to_datetime(report["reportDatetime"])
-
-            for area_type in report.get("areaTypes", []):
-                for area in area_type.get("areas", []):
-                    region = convert_region(area.get("code"))
-
-                    for warning in area.get("warnings", []):
-                        status = warning.get("status")
-
-                        # 解除は除外
-                        if status == "解除":
-                            continue
-
-                        records.append(
-                            {
-                                "datetime": dt,
-                                "date": dt.date(),
-                                "hour": dt.hour,
-                                "region": region,
-                                "event_type": convert_event(warning.get("code")),
-                                "intensity": 1,
-                            }
-                        )
-
-        except:
+            dt = pd.to_datetime(report.get("reportDatetime"))
+        except Exception:
             continue
+
+        for area_type in report.get("areaTypes", []):
+            for area in area_type.get("areas", []):
+
+                region = convert_region(area.get("code"))
+
+                for warning in area.get("warnings", []):
+                    if warning.get("status") == "解除":
+                        continue
+
+                    records.append(
+                        {
+                            "datetime": dt,
+                            "date": dt.date(),
+                            "hour": dt.hour,
+                            "region": region,
+                            "event_type": convert_event(warning.get("code")),
+                            "intensity": 1,
+                        }
+                    )
 
     return pd.DataFrame(records)
 
 
-# ======================
 # DB保存
-# ======================
-def save_to_db(df):
+def save_to_db(df: pd.DataFrame) -> None:
     if df.empty:
         return
 
-    conn = sqlite3.connect("disaster.db")
-    df.to_sql("disaster", conn, if_exists="append", index=False)
-    conn.close()
+    with sqlite3.connect("disaster.db") as conn:
+        df.to_sql("disaster", conn, if_exists="append", index=False)
 
 
-# ======================
-# データ読み込み
-# ======================
-def load_data():
-    conn = sqlite3.connect("disaster.db")
-
+# DB読み込み
+def load_data() -> pd.DataFrame:
     try:
-        df = pd.read_sql("SELECT * FROM disaster", conn)
-    except:
-        df = pd.DataFrame()
-
-    conn.close()
-    return df
+        with sqlite3.connect("disaster.db") as conn:
+            return pd.read_sql("SELECT * FROM disaster", conn)
+    except Exception:
+        return pd.DataFrame()
 
 
-# ======================
-# リスク計算
-# ======================
-def calculate_risk(df):
-    freq = df.groupby("region").size()
-    return freq.sort_values(ascending=False)
+# 地域別集計
+def calculate_risk(df: pd.DataFrame) -> pd.Series:
+    return df.groupby("region").size().sort_values(ascending=False)
 
 
-# ======================
-# グラフ
-# ======================
-def plot_bar(data, title):
+# グラフ表示
+def plot_bar(data: pd.Series, title: str) -> None:
     fig, ax = plt.subplots()
 
     data.plot(kind="bar", ax=ax)
 
-    # 🔥 日本語フォントを強制適用
     ax.set_title(title, fontproperties=font_prop)
     ax.set_xlabel("地域", fontproperties=font_prop)
     ax.set_ylabel("件数", fontproperties=font_prop)
 
-    # X軸ラベルも日本語対応
     for label in ax.get_xticklabels():
         label.set_fontproperties(font_prop)
 
@@ -189,46 +168,35 @@ def plot_bar(data, title):
 # ======================
 # UI
 # ======================
-st.title("災害リスク分析ツール（日本）")
+st.title("災害リスク分析ダッシュボード")
 
-st.write(
-    """
-気象庁の警報データを使用し、
-地域別・時間帯別の発生傾向を可視化しています。
-"""
-)
+st.caption("気象庁の警報データをもとに地域別の発生傾向を可視化します。")
 
-# データ取得
-if st.button("データ取得＆保存"):
+if st.button("データ更新"):
     df_new = fetch_data()
-    st.write("取得件数:", len(df_new))
+    st.write(f"取得件数: {len(df_new)}")
     save_to_db(df_new)
 
-# データ読み込み
 df = load_data()
 
 if df.empty:
-    st.warning("データがありません")
-else:
-    # 🔥 最新500件に制限
-    df = df.tail(500)
+    st.info("データがありません。更新ボタンから取得してください。")
+    st.stop()
 
-    st.write("総データ数:", len(df))
+df = df.tail(500)
 
-    # 地域別
-    st.subheader("地域別の災害発生数（上位10件）")
-    region_counts = df.groupby("region").size().sort_values(ascending=False).head(10)
-    plot_bar(region_counts, "地域別発生数")
+st.write(f"データ件数: {len(df)}")
 
-    # 時間帯別
-    st.subheader("時間帯別の発生数")
-    hour_counts = df.groupby("hour").size()
-    plot_bar(hour_counts, "時間帯別発生数")
+st.subheader("地域別発生件数（上位10）")
+region_counts = calculate_risk(df).head(10)
+plot_bar(region_counts, "地域別発生件数")
 
-    # リスク
-    st.subheader("リスクランキング（発生頻度ベース）")
-    risk = calculate_risk(df)
-    st.write(risk.head(10))
+st.subheader("時間帯別発生傾向")
+hour_counts = df.groupby("hour").size()
+plot_bar(hour_counts, "時間帯別発生数")
 
-    top_region = risk.index[0]
-    st.write(f"最もリスクが高い地域: {top_region}")
+st.subheader("リスクランキング")
+risk = calculate_risk(df)
+st.write(risk.head(10))
+
+st.write(f"最も発生が多い地域: {risk.index[0]}")
