@@ -1,79 +1,33 @@
-import sqlite3
-from datetime import datetime
-from zoneinfo import ZoneInfo
-import requests
+name: Data Collector
 
-DB = "disaster.db"
-URL = "https://www.jma.go.jp/bosai/warning/data/warning/map.json"
-TZ = ZoneInfo("Asia/Tokyo")
+on:
+  schedule:
+    - cron: "0 * * * *"  # 1時間ごと
+  workflow_dispatch:     # 手動実行も可能
 
-REGION = {
-    "01": "北海道","02": "青森県","03": "岩手県","04": "宮城県","05": "秋田県",
-    "06": "山形県","07": "福島県","08": "茨城県","09": "栃木県","10": "群馬県",
-    "11": "埼玉県","12": "千葉県","13": "東京都","14": "神奈川県","15": "新潟県",
-    "16": "富山県","17": "石川県","18": "福井県","19": "山梨県","20": "長野県",
-    "21": "岐阜県","22": "静岡県","23": "愛知県","24": "三重県","25": "滋賀県",
-    "26": "京都府","27": "大阪府","28": "兵庫県","29": "奈良県","30": "和歌山県",
-    "31": "鳥取県","32": "島根県","33": "岡山県","34": "広島県","35": "山口県",
-    "36": "徳島県","37": "香川県","38": "愛媛県","39": "高知県","40": "福岡県",
-    "41": "佐賀県","42": "長崎県","43": "熊本県","44": "大分県","45": "宮崎県",
-    "46": "鹿児島県","47": "沖縄県",
-}
+jobs:
+  run-collector:
+    runs-on: ubuntu-latest
 
-EVENT = {
-    "14": "大雨",
-    "15": "洪水",
-    "16": "暴風",
-    "17": "大雪",
-    "21": "強風",
-}
+    steps:
+      - name: リポジトリ取得
+        uses: actions/checkout@v3
 
-def init_db():
-    with sqlite3.connect(DB) as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS disasters (
-            snapshot_hour TEXT,
-            region TEXT,
-            event_type TEXT,
-            UNIQUE(snapshot_hour, region, event_type)
-        )
-        """)
+      - name: Pythonセットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
 
-def fetch():
-    now = datetime.now(TZ)
-    snapshot = now.replace(minute=0, second=0, microsecond=0)
+      - name: ライブラリインストール
+        run: pip install pandas requests
 
-    res = requests.get(URL, timeout=10)
-    data = res.json()
+      - name: データ収集実行
+        run: python collector.py
 
-    rows = []
-
-    for report in data:
-        for area_type in report.get("areaTypes", []):
-            for area in area_type.get("areas", []):
-                region = REGION.get(str(area.get("code"))[:2], "不明")
-
-                for w in area.get("warnings", []):
-                    if w.get("status") == "解除":
-                        continue
-
-                    event = EVENT.get(str(w.get("code")), "その他")
-
-                    rows.append((snapshot.isoformat(), region, event))
-
-    return rows
-
-def save(rows):
-    with sqlite3.connect(DB) as conn:
-        conn.executemany("""
-        INSERT OR IGNORE INTO disasters
-        (snapshot_hour, region, event_type)
-        VALUES (?, ?, ?)
-        """, rows)
-        conn.commit()
-
-if __name__ == "__main__":
-    init_db()
-    rows = fetch()
-    save(rows)
-    print(f"saved: {len(rows)}")
+      - name: 変更をコミット
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add disaster.db
+          git commit -m "auto update data" || echo "no changes"
+          git push
