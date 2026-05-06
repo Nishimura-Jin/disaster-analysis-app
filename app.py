@@ -480,29 +480,6 @@ def generate_risk_comment(row):
 STATUS_ORDER = {"継続": 0, "発表": 1, "警報から注意報へ移行": 2}
 
 
-def make_threshold_rules(y_warning, y_danger, label_warning, label_danger):
-    """しきい値ラインを2本返すヘルパー"""
-    warning_rule = (
-        alt.Chart(pd.DataFrame({"y": [y_warning], "label": [label_warning]}))
-        .mark_rule(color="gold", strokeDash=[4, 4])
-        .encode(y="y:Q", tooltip=alt.Tooltip("label:N", title="基準"))
-    )
-    danger_rule = (
-        alt.Chart(pd.DataFrame({"y": [y_danger], "label": [label_danger]}))
-        .mark_rule(color=COLOR_DANGER, strokeDash=[4, 4])
-        .encode(y="y:Q", tooltip=alt.Tooltip("label:N", title="基準"))
-    )
-    return warning_rule, danger_rule
-
-
-def make_x_axis(tick_count=None):
-    """日付X軸を返すヘルパー"""
-    axis = alt.Axis(format="%m/%d", labelAngle=0)
-    if tick_count:
-        axis = alt.Axis(format="%m/%d", labelAngle=0, tickCount=tick_count)
-    return alt.X("observed_date:T", title="日付", axis=axis)
-
-
 # ページ設定
 st.set_page_config(page_title="災害リスク分析ツール", layout="wide")
 st.title("災害リスク分析ツール")
@@ -609,26 +586,7 @@ with tab1:
         {
             "危険度": ["危険", "警戒", "注意", "安全"],
             "件数": [n_danger, n_caution, n_warning, n_safe],
-            "color": [COLOR_DANGER, COLOR_CAUTION, COLOR_WARNING, COLOR_SAFE],
         }
-    )
-
-    donut = (
-        alt.Chart(donut_df)
-        .mark_arc(innerRadius=70, outerRadius=120)
-        .encode(
-            theta=alt.Theta("件数:Q"),
-            color=alt.Color(
-                "危険度:N",
-                scale=alt.Scale(
-                    domain=["危険", "警戒", "注意", "安全"],
-                    range=[COLOR_DANGER, COLOR_CAUTION, COLOR_WARNING, COLOR_SAFE],
-                ),
-                legend=alt.Legend(title="危険度"),
-            ),
-            tooltip=["危険度", "件数"],
-        )
-        .properties(width=280, height=280)
     )
 
     block_risk = (
@@ -660,10 +618,10 @@ with tab1:
         color=alt.Color(
             "危険度:N",
             scale=alt.Scale(
-                domain=["危険", "注意", "安全"],
-                range=[COLOR_DANGER, COLOR_WARNING, COLOR_SAFE],
+                domain=["危険", "警戒", "注意", "安全"],
+                range=[COLOR_DANGER, COLOR_CAUTION, COLOR_WARNING, COLOR_SAFE],
             ),
-            legend=None,
+            legend=alt.Legend(title="危険度"),
         ),
         order=alt.Order("危険度:N", sort="descending"),
         tooltip=["block:N", "危険度:N", "件数:Q"],
@@ -672,7 +630,7 @@ with tab1:
     bar = bar_base.mark_bar().properties(height=280)
 
     # ドーナツグラフ：中央に主要な危険度と割合を大きく表示
-    total = n_danger + n_warning + n_safe
+    total = n_danger + n_caution + n_warning + n_safe
     if n_danger > 0:
         center_level = "危険"
         center_pct = round(n_danger / total * 100)
@@ -701,7 +659,7 @@ with tab1:
                     domain=["危険", "警戒", "注意", "安全"],
                     range=[COLOR_DANGER, COLOR_CAUTION, COLOR_WARNING, COLOR_SAFE],
                 ),
-                legend=alt.Legend(title="危険度"),
+                legend=None,
             ),
             tooltip=["危険度:N", "件数:Q"],
         )
@@ -714,9 +672,9 @@ with tab1:
     )
 
     center_level_text = (
-        alt.Chart(pd.DataFrame({"label": [center_level], "y": [-38]}))
-        .mark_text(size=16, color=center_color)
-        .encode(text="label:N", y=alt.Y("y:Q", axis=None))
+        alt.Chart(pd.DataFrame({"label": [center_level]}))
+        .mark_text(size=16, color=center_color, dy=38)
+        .encode(text="label:N")
     )
 
     col_donut, col_bar = st.columns([1, 1])
@@ -727,6 +685,22 @@ with tab1:
                 height=300
             ),
             use_container_width=True,
+        )
+        total_all = n_danger + n_caution + n_warning + n_safe
+        caption_parts = []
+        for level, count, color in [
+            ("危険", n_danger, COLOR_DANGER),
+            ("警戒", n_caution, COLOR_CAUTION),
+            ("注意", n_warning, COLOR_WARNING),
+            ("安全", n_safe, COLOR_SAFE),
+        ]:
+            pct = round(count / total_all * 100) if total_all > 0 else 0
+            caption_parts.append(
+                f"<span style='color:{color}'>●</span> {level} {count}県({pct}%)"
+            )
+        st.markdown(
+            "　".join(caption_parts),
+            unsafe_allow_html=True,
         )
     with col_bar:
         st.subheader("地方別の危険度")
@@ -750,9 +724,6 @@ with tab1:
 # タブ2：警報
 # ───────────────────────────────
 with tab2:
-    STATUS_ORDER = {"継続": 0, "発表": 1, "警報から注意報へ移行": 2}
-
-    STATUS_ORDER = {"継続": 0, "発表": 1, "警報から注意報へ移行": 2}
 
     warned = False
     warn_list = []
@@ -829,7 +800,7 @@ with tab3:
     with f2:
         filter_level = st.selectbox(
             "危険度で絞り込む",
-            ["すべて", "危険", "注意", "安全"],
+            ["すべて", "危険", "警戒", "注意", "安全"],
             index=0,
         )
 
@@ -900,9 +871,11 @@ with tab3:
     st_folium(m, width=None, height=500, use_container_width=True)
 
 # ───────────────────────────────
-# タブ4：トレンド
+# タブ4：気象予測（Plotly）
 # ───────────────────────────────
 with tab4:
+    import plotly.graph_objects as go
+
     regions = sorted(PREF_COORDS.keys())
     default_index = regions.index("大阪府") if "大阪府" in regions else 0
     sel = st.selectbox("地域選択", regions, index=default_index)
@@ -910,7 +883,7 @@ with tab4:
     # 過去データ（DB）
     past_df = risk_df[risk_df["region"] == sel].copy()
     past_df["observed_date"] = pd.to_datetime(past_df["observed_date"])
-    past_df["type"] = "実績"
+    past_df = past_df.sort_values("observed_date")
 
     # 予測データ（API）
     with st.spinner("予測データを取得しています..."):
@@ -919,105 +892,320 @@ with tab4:
 
     if not forecast_records:
         st.warning("予測データの取得に失敗しました")
-        combined_temp = past_df
-        combined_rain = past_df
+        forecast_df = pd.DataFrame(
+            columns=["observed_date", "temperature_max", "precipitation_sum"]
+        )
     else:
         forecast_df = pd.DataFrame(forecast_records)
         forecast_df["observed_date"] = pd.to_datetime(forecast_df["observed_date"])
         forecast_df = forecast_df.drop_duplicates(subset=["observed_date"]).sort_values(
             "observed_date"
         )
-        forecast_df["type"] = "予測"
 
-        # 過去と予測を結合（typeで実績/予測を区別）
-        combined = pd.concat(
+    # forecast_dfを今日以降（予測）として扱う
+    today_ts = pd.Timestamp(TODAY)
+    forecast_today = pd.DataFrame()  # 実績ラインへの結合は行わない
+    forecast_future = forecast_df.copy() if not forecast_df.empty else pd.DataFrame()
+
+    # 予測期間の終端日（X軸・vrectと一致させる）
+    forecast_end = (
+        forecast_future["observed_date"].max()
+        if not forecast_future.empty
+        else pd.Timestamp(TODAY) + timedelta(days=7)
+    )
+
+    # 現在の危険度を取得
+    sel_latest = latest[latest["region"] == sel]
+    sel_risk_level = (
+        sel_latest["risk_level"].values[0] if not sel_latest.empty else "安全"
+    )
+    sel_risk_score = (
+        int(sel_latest["risk_score"].values[0]) if not sel_latest.empty else 0
+    )
+    level_colors = {
+        "危険": COLOR_DANGER,
+        "警戒": COLOR_CAUTION,
+        "注意": COLOR_WARNING,
+        "安全": COLOR_SAFE,
+    }
+    sel_color = level_colors.get(sel_risk_level, COLOR_SAFE)
+
+    # ───── 気温グラフ ─────
+    st.markdown(
+        f"**気温の推移と予測 ／ {sel}**　"
+        f"<span style='color:{sel_color}; font-weight:bold;'>現在：{sel_risk_level}（スコア {sel_risk_score}）</span>",
+        unsafe_allow_html=True,
+    )
+    past_start = (
+        past_df["observed_date"].min().strftime("%m/%d") if not past_df.empty else ""
+    )
+    past_end = (
+        past_df["observed_date"].max().strftime("%m/%d") if not past_df.empty else ""
+    )
+    forecast_start_str = (
+        forecast_future["observed_date"].min().strftime("%m/%d")
+        if not forecast_future.empty
+        else ""
+    )
+    forecast_end_str = (
+        forecast_future["observed_date"].max().strftime("%m/%d")
+        if not forecast_future.empty
+        else ""
+    )
+    st.markdown(
+        f"<span style='font-size:0.82em; color:#888;'>"
+        f"縦軸：最高気温（℃）　"
+        f"<span style='color:{COLOR_WARNING};'>━</span> 日付：{past_start}〜{past_end}　"
+        f"<span style='color:#4a90d9;'>- - -</span> 予測：{forecast_start_str}〜{forecast_end_str}　"
+        f"<span style='color:#aaa;'>│</span> 縦線＝今日　"
+        f"<span style='background:#e8f4fd; padding:0 4px;'>　　</span> 予測期間"
+        f"</span>",
+        unsafe_allow_html=True,
+    )
+
+    temp_min = max(0, past_df["temperature_max"].min() - 5) if not past_df.empty else 0
+    temp_max = (
+        max(
+            past_df["temperature_max"].max() if not past_df.empty else 40,
+            forecast_df["temperature_max"].max() if not forecast_df.empty else 0,
+        )
+        + 5
+    )
+
+    fig_temp = go.Figure()
+
+    # 予測期間の背景色
+    fig_temp.add_vrect(
+        x0=pd.Timestamp(TODAY).isoformat(),
+        x1=forecast_end.isoformat(),
+        fillcolor="#e8f4fd",
+        opacity=0.3,
+        layer="below",
+        line_width=0,
+    )
+
+    # 実績ライン（archiveのみ・本日ラインまで）
+    fig_temp.add_trace(
+        go.Scatter(
+            x=past_df["observed_date"],
+            y=past_df["temperature_max"],
+            mode="lines",
+            line=dict(color=COLOR_WARNING, width=2),
+            showlegend=False,
+            hovertemplate="日付：%{x|%m/%d}<br>最高気温：%{y:.1f}℃<extra></extra>",
+        )
+    )
+
+    # 実績終点→予測始点をオレンジ点線でつなぐ
+    if not forecast_future.empty and not past_df.empty:
+        bridge_temp = pd.concat(
             [
-                past_df[
-                    ["observed_date", "temperature_max", "precipitation_sum", "type"]
-                ],
-                forecast_df[
-                    ["observed_date", "temperature_max", "precipitation_sum", "type"]
-                ],
+                past_df[["observed_date", "temperature_max"]].tail(1),
+                forecast_future[["observed_date", "temperature_max"]].head(1),
             ],
             ignore_index=True,
-        ).sort_values("observed_date")
-
-    # しきい値ライン
-    temp_w_rule, temp_d_rule = make_threshold_rules(
-        TEMP_WARNING, TEMP_DANGER, f"注意 {TEMP_WARNING}℃", f"危険 {TEMP_DANGER}℃"
-    )
-    rain_w_rule, rain_d_rule = make_threshold_rules(
-        RAIN_WARNING, RAIN_DANGER, f"注意 {RAIN_WARNING}mm", f"危険 {RAIN_DANGER}mm"
-    )
-
-    # 今日の境界線（実績と予測の区切り）- 太く・色を強調
-    today_rule = (
-        alt.Chart(
-            pd.DataFrame({"x": [pd.Timestamp(TODAY)], "label": ["← 実績 ｜ 予測 →"]})
         )
-        .mark_rule(color="#aaaaaa", strokeWidth=2)
-        .encode(x="x:T", tooltip=alt.Tooltip("label:N", title=""))
-    )
-
-    st.subheader(f"気温の推移と予測 ／ {sel}")
-    st.caption(
-        "🟠 実線＝過去8日の実績　⬜ 点線＝今後7日の予測　｜ 縦線＝今日　- - 基準ライン（黄：注意 / 赤：危険）"
-    )
-
-    temp_chart = (
-        alt.Chart(combined)
-        .mark_line()
-        .encode(
-            x=make_x_axis("day"),
-            y=alt.Y("temperature_max:Q", title="最高気温（℃）"),
-            color=alt.Color(
-                "type:N",
-                scale=alt.Scale(domain=["実績", "予測"], range=[COLOR_WARNING, "gray"]),
-                legend=alt.Legend(title="種別"),
-            ),
-            strokeDash=alt.StrokeDash(
-                "type:N",
-                scale=alt.Scale(domain=["実績", "予測"], range=[[1, 0], [6, 3]]),
-            ),
-            tooltip=[
-                alt.Tooltip("observed_date:T", title="日付", format="%Y-%m-%d"),
-                alt.Tooltip("temperature_max:Q", title="最高気温（℃）"),
-                alt.Tooltip("type:N", title="種別"),
-            ],
+        fig_temp.add_trace(
+            go.Scatter(
+                x=bridge_temp["observed_date"],
+                y=bridge_temp["temperature_max"],
+                mode="lines",
+                line=dict(color=COLOR_WARNING, width=2),
+                showlegend=False,
+                hoverinfo="skip",
+            )
         )
+
+    # 予測ライン（今日以降・グレーゾーンから破線で開始）
+    if not forecast_future.empty:
+        fig_temp.add_trace(
+            go.Scatter(
+                x=forecast_future["observed_date"],
+                y=forecast_future["temperature_max"],
+                mode="lines+markers",
+                line=dict(color="#4a90d9", width=2, dash="dash"),
+                marker=dict(size=7, color="#4a90d9"),
+                showlegend=False,
+                hovertemplate="日付：%{x|%m/%d}<br>最高気温：%{y:.1f}℃（予測）<extra></extra>",
+            )
+        )
+
+    # 今日の縦線
+    today_x = str(pd.Timestamp(TODAY))
+    fig_temp.add_shape(
+        type="line",
+        x0=today_x,
+        x1=today_x,
+        y0=0,
+        y1=1,
+        xref="x",
+        yref="paper",
+        line=dict(color="#aaaaaa", width=1.5),
     )
-    st.altair_chart(
-        temp_chart + temp_w_rule + temp_d_rule + today_rule,
-        use_container_width=True,
+    fig_temp.add_annotation(
+        x=today_x,
+        y=1,
+        xref="x",
+        yref="paper",
+        text="本日",
+        showarrow=False,
+        font=dict(color="#aaaaaa", size=11),
+        yanchor="bottom",
     )
 
-    st.subheader(f"降水量の推移と予測 ／ {sel}")
-
-    rain_chart = (
-        alt.Chart(combined)
-        .mark_line()
-        .encode(
-            x=make_x_axis("day"),
-            y=alt.Y("precipitation_sum:Q", title="降水量（mm）"),
-            color=alt.Color(
-                "type:N",
-                scale=alt.Scale(
-                    domain=["実績", "予測"], range=["steelblue", "lightblue"]
+    fig_temp.update_layout(
+        height=350,
+        margin=dict(l=20, r=20, t=20, b=40),
+        yaxis=dict(title=None, range=[temp_min, temp_max]),
+        xaxis=dict(
+            title=None,
+            tickformat="%m/%d",
+            dtick=86400000,
+            tickangle=-30,
+            range=[
+                past_df["observed_date"].min() if not past_df.empty else None,
+                (
+                    forecast_future["observed_date"].max()
+                    if not forecast_future.empty
+                    else None
                 ),
-                legend=alt.Legend(title="種別"),
-            ),
-            strokeDash=alt.StrokeDash(
-                "type:N",
-                scale=alt.Scale(domain=["実績", "予測"], range=[[1, 0], [6, 3]]),
-            ),
-            tooltip=[
-                alt.Tooltip("observed_date:T", title="日付", format="%Y-%m-%d"),
-                alt.Tooltip("precipitation_sum:Q", title="降水量（mm）"),
-                alt.Tooltip("type:N", title="種別"),
             ],
+        ),
+        showlegend=False,
+        hovermode="x unified",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+    fig_temp.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+    fig_temp.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+
+    st.plotly_chart(fig_temp, use_container_width=True)
+
+    # ───── 降水量グラフ ─────
+    st.markdown(f"**降水量の推移と予測 ／ {sel}**")
+    st.markdown(
+        f"<span style='font-size:0.82em; color:#888;'>"
+        f"縦軸：降水量（mm）　"
+        f"<span style='color:steelblue;'>━</span> 日付：{past_start}〜{past_end}　"
+        f"<span style='color:#4a90d9;'>- - -</span> 予測：{forecast_start_str}〜{forecast_end_str}　"
+        f"<span style='color:#aaa;'>│</span> 縦線＝今日　"
+        f"<span style='background:#e8f4fd; padding:0 4px;'>　　</span> 予測期間"
+        f"</span>",
+        unsafe_allow_html=True,
+    )
+
+    rain_max = (
+        max(
+            past_df["precipitation_sum"].max() if not past_df.empty else 0,
+            forecast_df["precipitation_sum"].max() if not forecast_df.empty else 0,
+        )
+        + 10
+    )
+
+    fig_rain = go.Figure()
+
+    # 予測期間の背景色
+    fig_rain.add_vrect(
+        x0=pd.Timestamp(TODAY).isoformat(),
+        x1=forecast_end.isoformat(),
+        fillcolor="#e8f4fd",
+        opacity=0.3,
+        layer="below",
+        line_width=0,
+    )
+
+    # 実績ライン（archiveのみ・本日ラインまで）
+    fig_rain.add_trace(
+        go.Scatter(
+            x=past_df["observed_date"],
+            y=past_df["precipitation_sum"],
+            mode="lines",
+            line=dict(color="steelblue", width=2),
+            showlegend=False,
+            hovertemplate="日付：%{x|%m/%d}<br>降水量：%{y:.1f}mm<extra></extra>",
         )
     )
-    st.altair_chart(
-        rain_chart + rain_w_rule + rain_d_rule + today_rule,
-        use_container_width=True,
+
+    # 実績終点→予測始点を青点線でつなぐ
+    if not forecast_future.empty and not past_df.empty:
+        bridge_rain = pd.concat(
+            [
+                past_df[["observed_date", "precipitation_sum"]].tail(1),
+                forecast_future[["observed_date", "precipitation_sum"]].head(1),
+            ],
+            ignore_index=True,
+        )
+        fig_rain.add_trace(
+            go.Scatter(
+                x=bridge_rain["observed_date"],
+                y=bridge_rain["precipitation_sum"],
+                mode="lines",
+                line=dict(color="steelblue", width=2),
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    # 予測ライン（今日以降・グレーゾーンから破線で開始）
+    if not forecast_future.empty:
+        fig_rain.add_trace(
+            go.Scatter(
+                x=forecast_future["observed_date"],
+                y=forecast_future["precipitation_sum"],
+                mode="lines+markers",
+                line=dict(color="#4a90d9", width=2, dash="dash"),
+                marker=dict(size=7, color="#4a90d9"),
+                showlegend=False,
+                hovertemplate="日付：%{x|%m/%d}<br>降水量：%{y:.1f}mm（予測）<extra></extra>",
+            )
+        )
+
+    # 今日の縦線
+    fig_rain.add_shape(
+        type="line",
+        x0=today_x,
+        x1=today_x,
+        y0=0,
+        y1=1,
+        xref="x",
+        yref="paper",
+        line=dict(color="#aaaaaa", width=1.5),
     )
+    fig_rain.add_annotation(
+        x=today_x,
+        y=1,
+        xref="x",
+        yref="paper",
+        text="本日",
+        showarrow=False,
+        font=dict(color="#aaaaaa", size=11),
+        yanchor="bottom",
+    )
+
+    fig_rain.update_layout(
+        height=350,
+        margin=dict(l=20, r=20, t=20, b=40),
+        yaxis=dict(title=None, range=[0, rain_max]),
+        xaxis=dict(
+            title=None,
+            tickformat="%m/%d",
+            dtick=86400000,
+            tickangle=-30,
+            range=[
+                past_df["observed_date"].min() if not past_df.empty else None,
+                (
+                    forecast_future["observed_date"].max()
+                    if not forecast_future.empty
+                    else None
+                ),
+            ],
+        ),
+        showlegend=False,
+        hovermode="x unified",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+    fig_rain.update_xaxes(showgrid=True, gridcolor="#eeeeee")
+    fig_rain.update_yaxes(showgrid=True, gridcolor="#eeeeee")
+
+    st.plotly_chart(fig_rain, use_container_width=True)
