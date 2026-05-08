@@ -57,7 +57,6 @@ https://disaster-risk-analyzer.streamlit.app/
 ### 気象予測タブ
 - **過去8日間の実績**：選択した都道府県の気温・降水量の推移を表示
 - **今後7日間の予測**：Open-Meteo予報APIから取得した予測値を同一グラフ上に重ねて表示
-- **しきい値ライン**：注意・危険の基準ラインをグラフ上に表示し、リスクの高まりを視覚化
 
 ---
 
@@ -103,11 +102,11 @@ https://disaster-risk-analyzer.streamlit.app/
 | Streamlit | WebアプリのUI構築 |
 | SQLite | 取得データのローカル保存 |
 | pandas | データ加工・集計 |
-| Altair | グラフ描画 |
+| Altair | グラフ描画（ドーナツ・横棒グラフ） |
+| Plotly | グラフ描画（気象予測グラフ） |
 | Folium | 地図描画 |
 | requests | 外部APIへのHTTPリクエスト |
-
-| インフラ | Streamlit Cloud |
+| Streamlit Cloud | デプロイ |
 
 ---
 
@@ -123,7 +122,7 @@ https://disaster-risk-analyzer.streamlit.app/
 
 ```bash
 # 依存ライブラリのインストール
-pip install streamlit pandas requests folium streamlit-folium altair
+pip install streamlit pandas requests folium streamlit-folium altair plotly
 
 # アプリの起動
 streamlit run app.py
